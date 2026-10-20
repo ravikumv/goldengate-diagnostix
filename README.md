@@ -1,0 +1,2 @@
+# goldengate-diagnostix
+Goldengate Diagnostix 

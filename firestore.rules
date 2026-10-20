@@ -1,0 +1,36 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // Replace with your own Google account email(s). Only these can open /admin.html data.
+    function isAdmin() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['YOUR_ADMIN_EMAIL@gmail.com'];
+    }
+
+    match /users/{uid} {
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(
+             ['displayName','email','photoDataUrl','provider','createdAt','lastLoginAt','lastActiveAt','messageCount'])
+        && request.resource.data.messageCount == 0
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.email == request.auth.token.email;
+
+      allow get: if (signedIn() && request.auth.uid == uid) || isAdmin();
+      allow list: if isAdmin();
+
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['displayName','photoDataUrl','lastLoginAt','lastActiveAt','messageCount'])
+        && (request.resource.data.messageCount == resource.data.messageCount
+            || request.resource.data.messageCount == resource.data.messageCount + 1)
+        && request.resource.data.photoDataUrl.size() < 150000
+        && request.resource.data.displayName.size() <= 80;
+
+      allow delete: if false;
+    }
+  }
+}

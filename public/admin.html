@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <title>Admin · Goldengate-Diagnostix</title>
+  <style>
+    :root { --bg:#EDF0F2; --surface:#fff; --ink:#12202B; --muted:#5B6B78; --line:#D5DCE1; --accent:#0F6B6B; --err-bg:#FBE9E7; --err-ink:#8C1D14; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#0C141B; --surface:#121E27; --ink:#E6EEF2; --muted:#8FA1AE; --line:#25343F; --accent:#3FB8B0; --err-bg:#2B1512; --err-ink:#F6B8B0; } }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:20px; }
+    h1 { margin:0; font-size:22px; letter-spacing:-0.02em; }
+    h2 { font-size:15px; margin:28px 0 8px; }
+    a { color: var(--accent); }
+    button { font:inherit; color:inherit; border:1px solid var(--line); background:var(--surface); border-radius:8px; padding:6px 12px; cursor:pointer; }
+    .note { padding:12px 14px; border-radius:8px; background:var(--err-bg); color:var(--err-ink); }
+    [hidden] { display:none !important; }
+    .headline { display:flex; flex-wrap:wrap; gap:0; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+    .headline > div { flex:1 1 180px; padding:16px 18px; border-right:1px solid var(--line); }
+    .headline > div:last-child { border-right:0; }
+    .num { font-size:34px; font-weight:600; letter-spacing:-0.03em; line-height:1.1; }
+    .lbl { color:var(--muted); font-size:13px; }
+    table { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:14px; }
+    th, td { padding:9px 12px; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+    th { color:var(--muted); font-weight:500; font-size:13px; }
+    tr:last-child td { border-bottom:0; }
+    .scroll { overflow-x:auto; }
+    .who { display:flex; align-items:center; gap:10px; }
+    .av { width:28px; height:28px; border-radius:50%; background:var(--accent); color:#fff; display:grid; place-items:center; font-size:12px; font-weight:600; overflow:hidden; flex:none; }
+    .av img { width:100%; height:100%; object-fit:cover; }
+    .muted { color:var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Usage &amp; subscribers</h1>
+    <div><a href="/">Back to app</a> &nbsp; <button id="refresh" type="button">Refresh</button></div>
+  </header>
+
+  <p id="msg" class="note" hidden></p>
+
+  <section id="stats" hidden>
+    <div class="headline">
+      <div><div class="num" id="sTotal">–</div><div class="lbl">Registered users</div></div>
+      <div><div class="num" id="sAct7">–</div><div class="lbl">Active in last 7 days</div></div>
+      <div><div class="num" id="sMsgs">–</div><div class="lbl">Total chat replies</div></div>
+    </div>
+
+    <h2>Signups</h2>
+    <div class="scroll"><table>
+      <tr><th>Today</th><th>Last 7 days</th><th>Last 30 days</th><th>With Google</th><th>With email</th></tr>
+      <tr><td id="nToday">–</td><td id="n7">–</td><td id="n30">–</td><td id="nGoogle">–</td><td id="nPass">–</td></tr>
+    </table></div>
+
+    <h2>Activity</h2>
+    <div class="scroll"><table>
+      <tr><th>Active today</th><th>Active last 7 days</th><th>Active last 30 days</th><th>Avg replies per user</th></tr>
+      <tr><td id="aToday">–</td><td id="a7">–</td><td id="a30">–</td><td id="avg">–</td></tr>
+    </table></div>
+
+    <h2>Newest users</h2>
+    <div class="scroll"><table id="recent">
+      <thead><tr><th>User</th><th>Email</th><th>Method</th><th>Joined</th><th>Last active</th><th>Replies</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+    <p class="muted" style="font-size:13px">For traffic, countries, devices and sign-up/login events, open Google Analytics (Firebase console → Analytics).</p>
+  </section>
+</main>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+  import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+  import {
+    getFirestore, collection, query, where, orderBy, limit, getDocs,
+    getCountFromServer, getAggregateFromServer, sum, Timestamp,
+  } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+  import { firebaseConfig } from "/firebase-config.js";
+
+  const $ = (id) => document.getElementById(id);
+  const auth = getAuth(initializeApp(firebaseConfig));
+  const db = getFirestore();
+  const users = collection(db, "users");
+  const fmt = (n) => Number(n).toLocaleString();
+  const ago = (days) => Timestamp.fromDate(new Date(Date.now() - days * 864e5));
+  const midnight = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return Timestamp.fromDate(d); };
+  const count = async (q) => (await getCountFromServer(q)).data().count;
+  const when = (t) => t?.toDate ? t.toDate().toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "–";
+
+  function msg(t) { $("msg").textContent = t; $("msg").hidden = false; $("stats").hidden = true; }
+
+  async function load() {
+    $("msg").hidden = true;
+    try {
+      const [total, today, d7, d30, google, pass, aToday, a7, a30, msgs, recent] = await Promise.all([
+        count(users),
+        count(query(users, where("createdAt", ">=", midnight()))),
+        count(query(users, where("createdAt", ">=", ago(7)))),
+        count(query(users, where("createdAt", ">=", ago(30)))),
+        count(query(users, where("provider", "==", "google.com"))),
+        count(query(users, where("provider", "==", "password"))),
+        count(query(users, where("lastActiveAt", ">=", midnight()))),
+        count(query(users, where("lastActiveAt", ">=", ago(7)))),
+        count(query(users, where("lastActiveAt", ">=", ago(30)))),
+        getAggregateFromServer(users, { total: sum("messageCount") }),
+        getDocs(query(users, orderBy("createdAt", "desc"), limit(25))),
+      ]);
+      const totalMsgs = msgs.data().total || 0;
+      $("sTotal").textContent = fmt(total); $("sAct7").textContent = fmt(a7); $("sMsgs").textContent = fmt(totalMsgs);
+      $("nToday").textContent = fmt(today); $("n7").textContent = fmt(d7); $("n30").textContent = fmt(d30);
+      $("nGoogle").textContent = fmt(google); $("nPass").textContent = fmt(pass);
+      $("aToday").textContent = fmt(aToday); $("a7").textContent = fmt(a7); $("a30").textContent = fmt(a30);
+      $("avg").textContent = total ? (totalMsgs / total).toFixed(1) : "0";
+
+      const tb = $("recent").querySelector("tbody");
+      tb.replaceChildren();
+      recent.forEach((d) => {
+        const u = d.data(), tr = document.createElement("tr");
+        const who = document.createElement("td"), wrap = document.createElement("div"), av = document.createElement("span");
+        wrap.className = "who"; av.className = "av";
+        if (u.photoDataUrl) { const i = document.createElement("img"); i.src = u.photoDataUrl; i.alt = ""; av.appendChild(i); }
+        else av.textContent = (u.displayName || u.email || "?").trim()[0]?.toUpperCase() || "?";
+        wrap.append(av, document.createTextNode(u.displayName || "–")); who.appendChild(wrap);
+        const cells = [u.email || "–", u.provider === "google.com" ? "Google" : "Email", when(u.createdAt), when(u.lastActiveAt), fmt(u.messageCount || 0)];
+        tr.appendChild(who);
+        cells.forEach((c) => { const td = document.createElement("td"); td.textContent = c; tr.appendChild(td); });
+        tb.appendChild(tr);
+      });
+      $("stats").hidden = false;
+    } catch (e) {
+      console.error(e);
+      msg(e.code === "permission-denied"
+        ? "Access denied. Sign in on the main app with the admin email set in your Firestore rules, then reload this page."
+        : "Couldn't load stats: " + (e.message || e));
+    }
+  }
+
+  $("refresh").addEventListener("click", load);
+  onAuthStateChanged(auth, (u) => {
+    if (!u) return msg("You're not signed in. Open the main app, sign in with your admin account, then reload this page.");
+    load();
+  });
+</script>
+</body>
+</html>
